@@ -1,0 +1,25 @@
+# Core Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+numpy<2.0.0
+
+# Vision Foundation Models & Hugging Face
+timm>=0.9.0
+transformers>=4.35.0
+huggingface_hub>=0.20.0
+einops>=0.7.0
+
+# Image Processing & Visualization
+pillow>=9.0.0
+matplotlib>=3.5.0
+scikit-learn>=1.0.0
+scipy>=1.8.0
+
+# Datasets & Testing
+datasets>=2.14.0
+loguru>=0.7.0
+pytest>=7.0.0
+
+# Jupyter Notebook Environment
+ipykernel>=6.0.0
+
