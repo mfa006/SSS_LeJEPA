@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "lejepa"
@@ -27,3 +27,7 @@ Documentation = "https://readthedocs.org"
 Repository = "https://github.com/me/spam.git"
 "Bug Tracker" = "https://github.com/me/spam/issues"
 Changelog = "https://github.com/me/spam/blob/master/CHANGELOG.md"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

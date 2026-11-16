@@ -1,5 +1,6 @@
 """
-Deterministic Side-Scan Sonar (SSS) dataset loader and few-shot partitioner.
+Deterministic Side-Scan Sonar (SSS) dataset loader.
+Supports both pre-split directory layouts and on-the-fly random partitioning.
 Enforces ZERO data augmentation to evaluate intrinsic representation quality.
 """
 
@@ -194,6 +195,59 @@ def partition_sss_dataset(
         train_imgs, train_masks, train_lbls,
         val_imgs, val_masks, val_lbls,
         test_imgs, test_masks, test_lbls,
+    )
+
+
+def load_presplit_dataset(
+    train_dir: str,
+    val_dir: str,
+    test_dir: str,
+    config: Optional["SSSDataConfig"] = None,
+) -> Tuple["SSSDataset", "SSSDataset", "SSSDataset"]:
+    """
+    Loads train / val / test datasets from directories that are **already split**.
+
+    Each split directory must contain:
+        <split_dir>/images/        ← sonar .tiff tiles
+        <split_dir>/masks/         ← semantic .tiff masks
+        <split_dir>/class_labels/  ← .csv label files   (optional)
+
+    Returns:
+        (train_dataset, val_dataset, test_dataset)
+    """
+    cfg = config or SSSDataConfig()
+
+    def _collect(split_dir: str) -> Tuple[List[str], List[str], List[str]]:
+        img_dir  = os.path.join(split_dir, cfg.images_subdir)
+        mask_dir = os.path.join(split_dir, cfg.masks_subdir)
+        lbl_dir  = os.path.join(split_dir, cfg.labels_subdir)
+
+        imgs = sorted(glob.glob(os.path.join(img_dir, f"*{cfg.image_extension}")))
+        if not imgs:
+            raise FileNotFoundError(
+                f"No '{cfg.image_extension}' images found in: {img_dir}"
+            )
+
+        masks = [os.path.join(mask_dir, os.path.basename(p)) for p in imgs]
+        lbls  = [
+            os.path.join(lbl_dir, os.path.basename(p).replace(cfg.image_extension, ".csv"))
+            for p in imgs
+        ]
+        return imgs, masks, lbls
+
+    train_imgs, train_masks, train_lbls = _collect(train_dir)
+    val_imgs,   val_masks,   val_lbls   = _collect(val_dir)
+    test_imgs,  test_masks,  test_lbls  = _collect(test_dir)
+
+    print(f"Dataset (pre-split):")
+    print(f"  Train : {len(train_imgs)} tiles  ({train_dir})")
+    print(f"  Val   : {len(val_imgs)} tiles  ({val_dir})")
+    print(f"  Test  : {len(test_imgs)} tiles  ({test_dir})")
+
+    return (
+        SSSDataset(train_imgs, train_masks, train_lbls, config=cfg),
+        SSSDataset(val_imgs,   val_masks,   val_lbls,   config=cfg),
+        SSSDataset(test_imgs,  test_masks,  test_lbls,  config=cfg),
     )
 
 

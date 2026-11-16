@@ -1,0 +1,53 @@
+# ============================================================
+# SSS Dense Linear Probe — Configuration
+# ============================================================
+# Data directories must already be split into train / val / test.
+# Each split directory must contain the same three sub-folders:
+#   images/        ← sonar waterfall tiles  (.tiff)
+#   masks/         ← semantic masks         (.tiff)
+#   class_labels/  ← per-tile label CSVs    (.csv)
+
+data:
+  train_dir: data/train          # path to training split root
+  val_dir:   data/val            # path to validation split root
+  test_dir:  data/test           # path to test split root
+
+  images_subdir:  images
+  masks_subdir:   masks
+  labels_subdir:  class_labels
+  image_extension: .tiff
+
+  target_size: [224, 224]        # resize all tiles to this (W, H)
+  enable_contrast_stretch: true  # 1st–99th percentile radiometric calibration
+  p_low:  0.01
+  p_high: 0.99
+
+# ── Backbone ─────────────────────────────────────────────────
+model:
+  # Supported: lejepa_vits16 | lejepa_vitb16 | resnet34 | convnext_tiny
+  name:   lejepa_vits16
+  device: cuda              # cuda | cpu
+
+# ── Linear Probe Architecture ────────────────────────────────
+probe:
+  num_classes: 4            # acoustic classes (ripples / target / sediment / shadow)
+  # Normalisation applied to frozen features before the 1x1 conv:
+  #   batchnorm | layernorm | l2 | none
+  norm_type: batchnorm
+  use_class_weights: true   # inverse-frequency weighting in CrossEntropyLoss
+  class_weights: [1.0, 13.8, 1.5, 1.8]   # [ripples, target, sediment, shadow]
+
+# ── Training Hyperparameters ─────────────────────────────────
+training:
+  epochs:                   30
+  batch_size:               32
+  learning_rate:            0.001
+  weight_decay:             0.0001
+  lr_scheduler:             cosine   # cosine | step | none
+  early_stopping_patience:  10
+
+# ── Output Paths ─────────────────────────────────────────────
+output:
+  cache_dir:       eval/cache         # pre-extracted feature tensors
+  checkpoint_dir:  eval/checkpoints   # trained probe weights (.pt)
+  results_dir:     eval/results       # metrics JSON/CSV + plots

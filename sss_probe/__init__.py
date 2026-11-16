@@ -18,6 +18,7 @@ from .dataset import (
     load_sonar_labels,
     SSSDataset,
     partition_sss_dataset,
+    load_presplit_dataset,
     get_sss_dataloaders,
 )
 from .backbones import BackboneExtractor, load_lejepa_model
@@ -43,6 +44,7 @@ __all__ = [
     "load_sonar_labels",
     "SSSDataset",
     "partition_sss_dataset",
+    "load_presplit_dataset",
     "get_sss_dataloaders",
     "BackboneExtractor",
     "load_lejepa_model",
