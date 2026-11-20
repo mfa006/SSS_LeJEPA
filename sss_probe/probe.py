@@ -84,7 +84,7 @@ class DenseLinearProbe(nn.Module):
 
 class GlobalLinearProbe(nn.Module):
     """
-    Global Linear Probe for image-level acoustic class / target presence.
+    Global Linear Probe for image-level acoustic class presence.
     Attaches a single nn.Linear layer on pooled representation [B, D].
     """
     def __init__(
@@ -108,7 +108,7 @@ class GlobalLinearProbe(nn.Module):
         Args:
             global_feat: [B, D] pooled embedding vector
         Returns:
-            logits: [B, num_classes] class logits
+            logits: [B, num_classes] class-presence logits
         """
         if self.normalize_features:
             global_feat = F.normalize(global_feat, p=2, dim=-1)

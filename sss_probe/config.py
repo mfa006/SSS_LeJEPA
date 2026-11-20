@@ -9,15 +9,15 @@ import torch
 
 # Acoustic semantic classes from ground-truth masks
 ACOUSTIC_CLASSES: Dict[int, str] = {
-    0: "Seabed Ripples",
-    1: "Target Anomaly (Highlight)",
-    2: "Smooth Sediment",
-    3: "Acoustic Shadow / Nadir",
+    0: "Ripples",
+    1: "Maerl",
+    2: "Rocks",
+    3: "Mud",
 }
 
 NUM_ACOUSTIC_CLASSES: int = len(ACOUSTIC_CLASSES)
 
-# Inverse class frequency weights (Class 1 is only ~7.2% of pixels)
+# Default class weights; estimate task-specific weights from training masks.
 DEFAULT_CLASS_WEIGHTS: List[float] = [1.0, 13.8, 1.5, 1.8]
 
 
@@ -33,7 +33,7 @@ class SSSDataConfig:
     
     # Radiometric contrast calibration (deterministic, zero artificial augmentation)
     enable_contrast_stretch: bool = True
-    p_low: float = 0.01    # 1st percentile (clips shadow saturation/zero floor)
+    p_low: float = 0.01    # 1st percentile (clips dark-floor outliers)
     p_high: float = 0.99   # 99th percentile (clips speckle spikes)
 
     # Few-shot data partitioning

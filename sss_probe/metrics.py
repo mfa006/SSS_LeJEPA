@@ -128,43 +128,71 @@ def compute_segmentation_metrics(
     Returns:
         Dict mapping metric names to values
     """
-    pred_flat = pred_masks.flatten()
-    gt_flat = gt_masks.flatten()
+    pred_flat = pred_masks.reshape(-1).astype(np.int64, copy=False)
+    gt_flat = gt_masks.reshape(-1).astype(np.int64, copy=False)
+    valid = (
+        (pred_flat >= 0)
+        & (pred_flat < num_classes)
+        & (gt_flat >= 0)
+        & (gt_flat < num_classes)
+    )
+    encoded = gt_flat[valid] * num_classes + pred_flat[valid]
+    confusion = np.bincount(encoded, minlength=num_classes * num_classes)
+    confusion = confusion.reshape(num_classes, num_classes)
+    return compute_segmentation_metrics_from_confusion(confusion)
 
-    ious = {}
-    dices = {}
 
-    for c in range(num_classes):
-        pred_c = (pred_flat == c)
-        gt_c = (gt_flat == c)
+def compute_segmentation_metrics_from_confusion(
+    confusion: np.ndarray,
+) -> Dict[str, float]:
+    """Compute segmentation metrics from a matrix with true rows and predicted columns."""
+    confusion = np.asarray(confusion, dtype=np.int64)
+    if confusion.ndim != 2 or confusion.shape[0] != confusion.shape[1]:
+        raise ValueError("confusion must be a square matrix")
 
-        intersection = np.logical_and(pred_c, gt_c).sum()
-        union = np.logical_or(pred_c, gt_c).sum()
+    true_support = confusion.sum(axis=1)
+    predicted_support = confusion.sum(axis=0)
+    true_positive = np.diag(confusion)
+    unions = true_support + predicted_support - true_positive
+    dice_denominators = true_support + predicted_support
 
-        if union == 0:
-            ious[f"iou_class_{c}"] = float("nan") # Class not present in set
-            dices[f"dice_class_{c}"] = float("nan")
-        else:
-            iou = intersection / union
-            dice = 2.0 * intersection / (pred_c.sum() + gt_c.sum())
-            ious[f"iou_class_{c}"] = float(iou)
-            dices[f"dice_class_{c}"] = float(dice)
+    ious = np.divide(
+        true_positive, unions,
+        out=np.full(unions.shape, np.nan, dtype=np.float64),
+        where=unions != 0,
+    )
+    dices = np.divide(
+        2 * true_positive, dice_denominators,
+        out=np.full(dice_denominators.shape, np.nan, dtype=np.float64),
+        where=dice_denominators != 0,
+    )
+    precisions = np.divide(
+        true_positive, predicted_support,
+        out=np.full(predicted_support.shape, np.nan, dtype=np.float64),
+        where=predicted_support != 0,
+    )
+    recalls = np.divide(
+        true_positive, true_support,
+        out=np.full(true_support.shape, np.nan, dtype=np.float64),
+        where=true_support != 0,
+    )
 
-    valid_ious = [v for v in ious.values() if not np.isnan(v)]
-    miou = float(np.mean(valid_ious)) if valid_ious else 0.0
-
-    valid_dices = [v for v in dices.values() if not np.isnan(v)]
-    mdice = float(np.mean(valid_dices)) if valid_dices else 0.0
-
-    pixel_acc = float(np.mean(pred_flat == gt_flat))
-
+    mean_valid = lambda values: float(np.nanmean(values)) if np.any(~np.isnan(values)) else 0.0
+    total = int(confusion.sum())
     results = {
-        "mIoU": miou,
-        "mDice": mdice,
-        "pixel_accuracy": pixel_acc,
+        "mIoU": mean_valid(ious),
+        "mDice": mean_valid(dices),
+        "macro_precision": mean_valid(precisions),
+        "macro_recall": mean_valid(recalls),
+        "pixel_accuracy": float(true_positive.sum() / total) if total else 0.0,
     }
-    results.update(ious)
-    results.update(dices)
+    for class_index in range(confusion.shape[0]):
+        results[f"iou_class_{class_index}"] = float(ious[class_index])
+        results[f"dice_class_{class_index}"] = float(dices[class_index])
+        results[f"precision_class_{class_index}"] = float(precisions[class_index])
+        results[f"recall_class_{class_index}"] = float(recalls[class_index])
+        results[f"support_class_{class_index}"] = int(true_support[class_index])
+        results[f"predicted_support_class_{class_index}"] = int(predicted_support[class_index])
     return results
 
 

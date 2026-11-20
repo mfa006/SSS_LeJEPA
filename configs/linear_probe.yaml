@@ -8,9 +8,9 @@
 #   class_labels/  ← per-tile label CSVs    (.csv)
 
 data:
-  train_dir: data/train          # path to training split root
-  val_dir:   data/val            # path to validation split root
-  test_dir:  data/test           # path to test split root
+  train_dir: /media/rahul/Apacer_1TB/data/FromHayat/2ndRound/SSS/s3seg4_256_unique/data/liear_prob/
+  val_dir:   /media/rahul/Apacer_1TB/data/FromHayat/2ndRound/SSS/s3seg4_256_unique/data/val
+  test_dir:  /media/rahul/Apacer_1TB/data/FromHayat/2ndRound/SSS/s3seg4_256_unique/data/test
 
   images_subdir:  images
   masks_subdir:   masks
@@ -25,17 +25,17 @@ data:
 # ── Backbone ─────────────────────────────────────────────────
 model:
   # Supported: lejepa_vits16 | lejepa_vitb16 | resnet34 | convnext_tiny
-  name:   lejepa_vits16
+  name: lejepa_vits16 #convnext_tiny #resnet34
   device: cuda              # cuda | cpu
 
 # ── Linear Probe Architecture ────────────────────────────────
 probe:
-  num_classes: 4            # acoustic classes (ripples / target / sediment / shadow)
+  num_classes: 4            # acoustic classes (ripples / maerl / rocks / mud)
   # Normalisation applied to frozen features before the 1x1 conv:
   #   batchnorm | layernorm | l2 | none
   norm_type: batchnorm
   use_class_weights: true   # inverse-frequency weighting in CrossEntropyLoss
-  class_weights: [1.0, 13.8, 1.5, 1.8]   # [ripples, target, sediment, shadow]
+  class_weights: [1.0, 1.498, 1.907, 2.107]   # [ripples, maerl, rocks, mud]
 
 # ── Training Hyperparameters ─────────────────────────────────
 training:
@@ -48,6 +48,6 @@ training:
 
 # ── Output Paths ─────────────────────────────────────────────
 output:
-  cache_dir:       eval/cache         # pre-extracted feature tensors
-  checkpoint_dir:  eval/checkpoints   # trained probe weights (.pt)
-  results_dir:     eval/results       # metrics JSON/CSV + plots
+  cache_dir:       /home/rahul/SSS_LeJEPA/eval/cache         # pre-extracted feature tensors
+  checkpoint_dir:  /home/rahul/SSS_LeJEPA/eval/checkpoints   # trained probe weights (.pt)
+  results_dir:     /home/rahul/SSS_LeJEPA/eval/results       # metrics JSON/CSV + plots

@@ -13,10 +13,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from .config import LinearProbeConfig, NUM_ACOUSTIC_CLASSES
 from .probe import DenseLinearProbe
-from .metrics import compute_segmentation_metrics
+from .metrics import compute_segmentation_metrics_from_confusion
 
 
 class DenseProbeTrainer:
@@ -93,7 +94,12 @@ class DenseProbeTrainer:
         self.best_epoch = 1
         patience_counter = 0
 
-        for epoch in range(1, self.config.epochs + 1):
+        epoch_bar = tqdm(
+            range(1, self.config.epochs + 1),
+            desc="Training 1x1 Linear Layer",
+            unit="epoch",
+        )
+        for epoch in epoch_bar:
             self.probe.train()
             epoch_loss = 0.0
 
@@ -115,6 +121,8 @@ class DenseProbeTrainer:
             current_lr = self.optimizer.param_groups[0]["lr"]
             history["learning_rates"].append(current_lr)
 
+            progress = {"train_loss": f"{epoch_loss:.4f}", "lr": f"{current_lr:.2e}"}
+
             if self.scheduler:
                 self.scheduler.step()
 
@@ -126,6 +134,10 @@ class DenseProbeTrainer:
 
                 history["val_loss"].append(val_loss)
                 history["val_miou"].append(val_miou)
+                progress.update(
+                    val_loss=f"{val_loss:.4f}",
+                    val_mIoU=f"{val_miou:.4f}",
+                )
 
                 if val_miou > self.best_val_miou:
                     self.best_val_miou = val_miou
@@ -137,6 +149,8 @@ class DenseProbeTrainer:
                     if patience_counter >= self.config.early_stopping_patience:
                         print(f"Early stopping triggered at epoch {epoch} (Best Val mIoU: {self.best_val_miou * 100:.2f}% at epoch {self.best_epoch})")
                         break
+
+            epoch_bar.set_postfix(progress)
 
         # Restore the best performing model weights
         if self.best_state_dict is not None:
@@ -161,8 +175,10 @@ class DenseProbeTrainer:
         loader = DataLoader(ds, batch_size=self.config.batch_size, shuffle=False)
 
         total_loss = 0.0
-        all_preds = []
-        all_gts = []
+        num_classes = self.probe.num_classes
+        confusion = torch.zeros(
+            (num_classes, num_classes), dtype=torch.int64, device=self.device
+        )
 
         for feats, m_batch in loader:
             feats = feats.to(self.device)
@@ -172,15 +188,15 @@ class DenseProbeTrainer:
             loss = self.criterion(logits, m_batch)
             total_loss += loss.item() * feats.size(0)
 
-            preds = logits.argmax(dim=1).cpu().numpy()
-            all_preds.append(preds)
-            all_gts.append(m_batch.cpu().numpy())
+            preds = logits.argmax(dim=1)
+            valid = (m_batch >= 0) & (m_batch < num_classes)
+            encoded = m_batch[valid] * num_classes + preds[valid]
+            confusion += torch.bincount(
+                encoded, minlength=num_classes * num_classes
+            ).reshape(num_classes, num_classes)
 
         total_loss /= len(ds)
-        pred_arr = np.concatenate(all_preds, axis=0) # [N, H, W]
-        gt_arr = np.concatenate(all_gts, axis=0)     # [N, H, W]
-
-        metrics = compute_segmentation_metrics(pred_arr, gt_arr)
+        metrics = compute_segmentation_metrics_from_confusion(confusion.cpu().numpy())
         metrics["val_loss"] = total_loss
         return metrics
 

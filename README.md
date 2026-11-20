@@ -42,12 +42,12 @@ SSS_LeJEPA/
 
 ## Acoustic Semantic Classes
 
-| ID | Class | Description |
-|----|-------|-------------|
-| 0 | Seabed Ripples | Periodic bedform texture |
-| 1 | Target Anomaly | Bright highlight (object on seabed) |
-| 2 | Smooth Sediment | Flat, low-backscatter regions |
-| 3 | Acoustic Shadow / Nadir | Dark regions behind targets or nadir |
+| ID | Class |
+|----|-------|
+| 0 | Ripples |
+| 1 | Maerl |
+| 2 | Rocks |
+| 3 | Mud |
 
 ---
 
@@ -174,22 +174,6 @@ Data must be pre-split into three directories. Each must follow the same structu
 Set `data.train_dir`, `data.val_dir`, and `data.test_dir` in `configs/linear_probe.yaml` accordingly.
 
 ---
-
-## Citation
-
-```bibtex
-@misc{balestriero2025lejepaprovablescalableselfsupervised,
-      title={LeJEPA: Provable and Scalable Self-Supervised Learning Without the Heuristics},
-      author={Randall Balestriero and Yann LeCun},
-      year={2025},
-      eprint={2511.08544},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2511.08544},
-}
-```
-
-
 
 ## Data Layout
 

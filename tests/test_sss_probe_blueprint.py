@@ -24,6 +24,12 @@ def test_config_initialization():
     assert cfg.train_ratio == 0.10
     assert cfg.val_ratio == 0.05
     assert cfg.test_ratio == 0.85
+    assert sss_probe.ACOUSTIC_CLASSES == {
+        0: "Ripples",
+        1: "Maerl",
+        2: "Rocks",
+        3: "Mud",
+    }
     assert len(sss_probe.ACOUSTIC_CLASSES) == 4
     assert "resnet34" in sss_probe.SUPPORTED_BACKBONES
     assert "convnext_tiny" in sss_probe.SUPPORTED_BACKBONES
@@ -60,13 +66,19 @@ def test_pca_feature_map_computation():
 
 
 def test_segmentation_metrics():
-    # Perfect match test
-    gt = np.random.randint(0, 4, size=(5, 224, 224))
-    pred = gt.copy()
+    gt = np.array([[0, 0, 1, 1], [2, 3, 3, 0]])
+    pred = np.array([[0, 1, 1, 1], [2, 2, 3, 0]])
 
     metrics = compute_segmentation_metrics(pred, gt, num_classes=4)
-    assert metrics["mIoU"] == 1.0
-    assert metrics["pixel_accuracy"] == 1.0
+    assert metrics["pixel_accuracy"] == 6 / 8
+    assert metrics["precision_class_0"] == 1.0
+    assert metrics["recall_class_0"] == 2 / 3
+    assert metrics["precision_class_1"] == 2 / 3
+    assert metrics["recall_class_1"] == 1.0
+    assert metrics["support_class_2"] == 1
+    assert metrics["predicted_support_class_2"] == 2
+    assert metrics["macro_precision"] == pytest.approx((1 + 2 / 3 + 1 / 2 + 1) / 4)
+    assert metrics["macro_recall"] == pytest.approx((2 / 3 + 1 + 1 + 1 / 2) / 4)
 
 
 def test_dense_probe_trainer_fit_and_checkpoint(tmp_path):

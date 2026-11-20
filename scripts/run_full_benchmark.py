@@ -62,7 +62,7 @@ def run_full_benchmark(
         print("\n" + "=" * 75)
         print(" FINAL BENCHMARK LEADERBOARD (UNSEEN 85% TEST SET)")
         print("=" * 75)
-        print(df[["model", "feature_dim", "test_mIoU_pct", "test_mDice_pct", "test_pixel_acc_pct", "test_iou_target_pct"]].to_string(index=False))
+        print(df[["model", "feature_dim", "test_mIoU_pct", "test_mDice_pct", "test_pixel_acc_pct", "test_macro_precision_pct", "test_macro_recall_pct", "test_iou_maerl_pct"]].to_string(index=False))
         print("=" * 75)
         print(f"Full CSV results saved at: {csv_path}")
         print(f"Trained models saved at:   {checkpoint_dir}/")

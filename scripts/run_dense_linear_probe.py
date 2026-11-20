@@ -30,7 +30,7 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from sss_probe.config import SSSDataConfig, LinearProbeConfig, SUPPORTED_BACKBONES
+from sss_probe.config import ACOUSTIC_CLASSES, SSSDataConfig, LinearProbeConfig, SUPPORTED_BACKBONES
 from sss_probe.dataset import load_presplit_dataset, SSSDataset
 from sss_probe.backbones import BackboneExtractor
 from sss_probe.probe import DenseLinearProbe
@@ -78,6 +78,25 @@ def build_probe_config(cfg: dict, device: str) -> LinearProbeConfig:
         checkpoint_dir           = o.get("checkpoint_dir",           "eval/checkpoints"),
         results_dir              = o.get("results_dir",              "eval/results"),
     )
+
+
+def resolve_device(device_name: str) -> Tuple[str, str]:
+    if device_name == "cpu":
+        return "cpu", "CPU"
+    if not device_name.startswith("cuda"):
+        raise ValueError(f"Unsupported device '{device_name}'. Use 'cuda', 'cuda:N', or 'cpu'.")
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            f"CUDA was requested ({device_name}) but is unavailable in "
+            f"{sys.executable}. Refusing to train silently on CPU."
+        )
+
+    device = torch.device(device_name)
+    try:
+        gpu_name = torch.cuda.get_device_name(device)
+    except (AssertionError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"Requested CUDA device '{device_name}' is not usable: {exc}") from exc
+    return str(device), gpu_name
 
 
 # ── Feature caching ──────────────────────────────────────────────────────────
@@ -145,13 +164,29 @@ def update_benchmark_summary(
         "test_mIoU_pct":        round(test_metrics["mIoU"] * 100, 2),
         "test_mDice_pct":       round(test_metrics["mDice"] * 100, 2),
         "test_pixel_acc_pct":   round(test_metrics["pixel_accuracy"] * 100, 2),
-        "test_iou_ripples_pct": round(test_metrics.get("iou_class_0", 0.0) * 100, 2),
-        "test_iou_target_pct":  round(test_metrics.get("iou_class_1", 0.0) * 100, 2),
-        "test_iou_sediment_pct":round(test_metrics.get("iou_class_2", 0.0) * 100, 2),
-        "test_iou_shadow_pct":  round(test_metrics.get("iou_class_3", 0.0) * 100, 2),
+        "test_macro_precision_pct": round(test_metrics["macro_precision"] * 100, 2),
+        "test_macro_recall_pct":    round(test_metrics["macro_recall"] * 100, 2),
+        "val_macro_precision_pct":  round(val_metrics["macro_precision"] * 100, 2),
+        "val_macro_recall_pct":     round(val_metrics["macro_recall"] * 100, 2),
         "val_mIoU_pct":         round(val_metrics["mIoU"] * 100, 2),
         "val_pixel_acc_pct":    round(val_metrics["pixel_accuracy"] * 100, 2),
     }
+    class_slugs = {
+        class_idx: class_name.lower().replace(" ", "_")
+        for class_idx, class_name in ACOUSTIC_CLASSES.items()
+    }
+    for class_idx, class_name in ACOUSTIC_CLASSES.items():
+        slug = class_slugs[class_idx]
+        record[f"test_iou_{slug}_pct"] = round(test_metrics[f"iou_class_{class_idx}"] * 100, 2)
+        record[f"test_precision_{slug}_pct"] = round(
+            test_metrics[f"precision_class_{class_idx}"] * 100, 2
+        )
+        record[f"test_recall_{slug}_pct"] = round(
+            test_metrics[f"recall_class_{class_idx}"] * 100, 2
+        )
+        record[f"test_support_{slug}_pixels"] = test_metrics[
+            f"support_class_{class_idx}"
+        ]
 
     summary_data = {}
     if os.path.exists(summary_json):
@@ -169,8 +204,12 @@ def update_benchmark_summary(
     fieldnames = [
         "model", "feature_dim", "best_epoch",
         "test_mIoU_pct", "test_mDice_pct", "test_pixel_acc_pct",
-        "test_iou_ripples_pct", "test_iou_target_pct",
-        "test_iou_sediment_pct", "test_iou_shadow_pct",
+        "test_macro_precision_pct", "test_macro_recall_pct",
+        "val_macro_precision_pct", "val_macro_recall_pct",
+        *[f"test_iou_{slug}_pct" for slug in class_slugs.values()],
+        *[f"test_precision_{slug}_pct" for slug in class_slugs.values()],
+        *[f"test_recall_{slug}_pct" for slug in class_slugs.values()],
+        *[f"test_support_{slug}_pixels" for slug in class_slugs.values()],
         "val_mIoU_pct", "val_pixel_acc_pct",
     ]
     with open(summary_csv, "w", newline="") as f:
@@ -237,13 +276,12 @@ def run_dense_probe_experiment(yaml_path: str) -> Dict[str, Any]:
     cfg        = load_yaml(yaml_path)
     model_name = cfg["model"]["name"]
     device_str = cfg["model"].get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    device     = device_str if torch.cuda.is_available() or device_str == "cpu" else "cpu"
+    device, gpu_name = resolve_device(device_str)
 
     output_dir     = cfg["output"].get("results_dir",    "eval/results")
     checkpoint_dir = cfg["output"].get("checkpoint_dir", "eval/checkpoints")
     cache_dir      = cfg["output"].get("cache_dir",      "eval/cache")
 
-    gpu_name = torch.cuda.get_device_name(device) if "cuda" in device and torch.cuda.is_available() else "CPU"
     print("=" * 70)
     print(" SSS DENSE LINEAR PROBE  —  YAML-driven")
     print("=" * 70)
@@ -321,10 +359,17 @@ def run_dense_probe_experiment(yaml_path: str) -> Dict[str, Any]:
     print(f"• Test Mean IoU (mIoU):         {test_metrics['mIoU'] * 100:.2f}%")
     print(f"• Test Mean Dice Score:         {test_metrics['mDice'] * 100:.2f}%")
     print(f"• Test Overall Pixel Accuracy:  {test_metrics['pixel_accuracy'] * 100:.2f}%")
-    print(f"• Class 0 (Ripples) IoU:        {test_metrics.get('iou_class_0', 0.0) * 100:.2f}%")
-    print(f"• Class 1 (Target Anomaly) IoU: {test_metrics.get('iou_class_1', 0.0) * 100:.2f}%")
-    print(f"• Class 2 (Sediment) IoU:       {test_metrics.get('iou_class_2', 0.0) * 100:.2f}%")
-    print(f"• Class 3 (Shadow) IoU:         {test_metrics.get('iou_class_3', 0.0) * 100:.2f}%")
+    print(f"• Test Macro Precision:         {test_metrics['macro_precision'] * 100:.2f}%")
+    print(f"• Test Macro Recall:            {test_metrics['macro_recall'] * 100:.2f}%")
+    for class_idx, class_name in ACOUSTIC_CLASSES.items():
+        print(
+            f"• {class_name}: precision "
+            f"{test_metrics[f'precision_class_{class_idx}'] * 100:.2f}%, "
+            f"recall {test_metrics[f'recall_class_{class_idx}'] * 100:.2f}%, "
+            f"support {test_metrics[f'support_class_{class_idx}']:,} pixels"
+        )
+    for class_idx, class_name in ACOUSTIC_CLASSES.items():
+        print(f"• Class {class_idx} ({class_name}) IoU: {test_metrics[f'iou_class_{class_idx}'] * 100:.2f}%")
     print("=" * 65)
 
     # ── 10. Save per-model JSON & cumulative benchmark ────────────────────────
@@ -333,6 +378,7 @@ def run_dense_probe_experiment(yaml_path: str) -> Dict[str, Any]:
         json.dump(
             {
                 "model_name":       model_name,
+                "class_names":      {str(index): name for index, name in ACOUSTIC_CLASSES.items()},
                 "config_file":      yaml_path,
                 "best_epoch":       trainer.best_epoch,
                 "test_metrics":     test_metrics,
