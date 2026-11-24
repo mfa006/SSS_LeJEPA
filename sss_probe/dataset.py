@@ -23,6 +23,10 @@ def preprocess_sonar_image(
     enable_contrast_stretch: bool = True,
     p_low: float = 0.01,
     p_high: float = 0.99,
+    input_channels: int = 3,
+    preprocessing: str = "imagenet",
+    benthic_mean: float = 0.7706402539115733,
+    benthic_std: float = 0.15731125981879593,
 ) -> Tuple[Image.Image, torch.Tensor]:
     """
     Deterministic acoustic image loader.
@@ -56,11 +60,17 @@ def preprocess_sonar_image(
         if q_high > q_low:
             t = torch.clamp((t - q_low) / (q_high - q_low) * 255.0, 0.0, 255.0)
 
-    # 4. Standard 3-channel broadcast and ImageNet normalization
-    t_3ch = (t.unsqueeze(0).repeat(3, 1, 1) / 255.0)
-    mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
-    norm_tensor = (t_3ch - mean) / std
+    # 4. Model-specific normalization: RGB for existing benchmarks, 1-channel for BenthicDINO
+    t_1ch = t.unsqueeze(0) / 255.0
+    if preprocessing == "benthic" or input_channels == 1:
+        norm_tensor = (t_1ch - benthic_mean) / benthic_std
+    else:
+        if input_channels != 3:
+            raise ValueError(f"Unsupported input_channels={input_channels}; expected 1 or 3")
+        norm_tensor = t_1ch.repeat(3, 1, 1)
+        mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
+        norm_tensor = (norm_tensor - mean) / std
 
     return gray_img, norm_tensor
 
@@ -136,13 +146,21 @@ class SSSDataset(Dataset):
             enable_contrast_stretch=self.config.enable_contrast_stretch,
             p_low=self.config.p_low,
             p_high=self.config.p_high,
+            input_channels=self.config.input_channels,
+            preprocessing=self.config.preprocessing,
+            benthic_mean=self.config.benthic_mean,
+            benthic_std=self.config.benthic_std,
         )
 
         mask_tensor = load_sonar_mask(mask_path, target_size=self.config.target_size)
-        label_tensor = load_sonar_labels(label_path) if label_path else torch.zeros(4)
+        label_tensor = (
+            load_sonar_labels(label_path)
+            if self.config.load_tile_labels and label_path
+            else torch.zeros(4)
+        )
 
         return {
-            "image": image_tensor,       # [3, 224, 224]
+            "image": image_tensor,
             "mask": mask_tensor,         # [224, 224] (long)
             "labels": label_tensor,      # [4] (binary float)
             "filename": os.path.basename(img_path),

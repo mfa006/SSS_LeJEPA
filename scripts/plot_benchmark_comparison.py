@@ -3,14 +3,22 @@
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from sss_probe.config import SUPPORTED_BACKBONES
+
 
 MODEL_LABELS = {
+    "benthic_dino": "BenthicDINO (ConvNeXt-V2-Tiny)",
     "lejepa_vits16": "LeJEPA ViT-S/16",
     "lejepa_vitb16": "LeJEPA ViT-B/16",
     "resnet34": "ResNet-34",
@@ -21,10 +29,12 @@ MODEL_COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00")
 OVERALL_METRICS = (
     ("test_mIoU_pct", "mIoU"),
     ("test_mDice_pct", "mDice"),
+    ("test_macro_f1_pct", "Macro F1"),
     ("test_pixel_acc_pct", "Pixel accuracy"),
     ("test_macro_precision_pct", "Macro precision"),
     ("test_macro_recall_pct", "Macro recall"),
 )
+LEGACY_METRIC_KEYS = {"test_macro_f1_pct": "test_mDice_pct"}
 
 
 def load_results(path: Path) -> list[dict[str, Any]]:
@@ -42,6 +52,8 @@ def load_results(path: Path) -> list[dict[str, Any]]:
 def metric_value(row: dict[str, Any], key: str) -> float | None:
     value = row.get(key)
     if value in (None, ""):
+        value = row.get(LEGACY_METRIC_KEYS.get(key, ""))
+    if value in (None, ""):
         return None
     try:
         return float(value)
@@ -53,7 +65,18 @@ def model_label(row: dict[str, Any]) -> str:
     model_name = row["model"]
     feature_dim = row.get("feature_dim")
     label = MODEL_LABELS.get(model_name, model_name.replace("_", " ").title())
-    return f"{label} (D={feature_dim})" if feature_dim else label
+    details = []
+    if feature_dim:
+        details.append(f"D={feature_dim}")
+
+    parameter_count = row.get("param_count_m")
+    if parameter_count in (None, ""):
+        model_spec = SUPPORTED_BACKBONES.get(model_name)
+        parameter_count = model_spec.param_count_m if model_spec else None
+    if parameter_count not in (None, ""):
+        details.append(f"{float(parameter_count):.2f}M params")
+
+    return f"{label} ({', '.join(details)})" if details else label
 
 
 def save_figure(fig: plt.Figure, output_stem: Path) -> None:
@@ -123,7 +146,7 @@ def plot_overall(rows: list[dict[str, Any]], output_dir: Path) -> None:
         dtype=np.float64,
     )
     value_range = (80.0, 100.0)
-    fig, axis = plt.subplots(figsize=(11, 5.5), layout="constrained")
+    fig, axis = plt.subplots(figsize=(13, 5.5), layout="constrained")
     image = draw_score_matrix(
         axis,
         values,
@@ -136,7 +159,7 @@ def plot_overall(rows: list[dict[str, Any]], output_dir: Path) -> None:
     fig.text(
         0.01,
         -0.01,
-        "Color scale: 80–100%. Exact scores are printed in every cell.",
+        "Color scale: 80–100%. Macro F1 equals mDice for single-label segmentation.",
         fontsize=9,
         color="#4B5563",
     )
@@ -172,15 +195,14 @@ def plot_class_iou(rows: list[dict[str, Any]], output_dir: Path) -> None:
     save_figure(fig, output_dir / "benchmark_class_iou")
 
 
-def plot_class_precision_recall(
+def plot_class_precision_and_recall(
     rows: list[dict[str, Any]], output_dir: Path
 ) -> None:
     value_range = (80.0, 100.0)
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5), layout="constrained")
     row_labels = [model_label(row) for row in rows]
-    for axis, metric, title in (
-        (axes[0], "precision", "Test Precision by Class"),
-        (axes[1], "recall", "Test Recall by Class"),
+    for metric, title in (
+        ("precision", "Test Precision by Class"),
+        ("recall", "Test Recall by Class"),
     ):
         values = np.asarray(
             [
@@ -189,18 +211,21 @@ def plot_class_precision_recall(
             ],
             dtype=np.float64,
         )
+        fig, axis = plt.subplots(figsize=(9, 5), layout="constrained")
         image = draw_score_matrix(
             axis, values, row_labels, list(CLASS_NAMES), title, value_range
         )
         add_score_colorbar(fig, axis, image, value_range)
-    fig.text(
-        0.01,
-        -0.01,
-        "Color scale: 80–100%. Exact scores are printed in every cell.",
-        fontsize=9,
-        color="#4B5563",
-    )
-    save_figure(fig, output_dir / "benchmark_class_precision_recall")
+        fig.text(
+            0.01,
+            -0.01,
+            "Color scale: 80–100%. Exact scores are printed in every cell.",
+            fontsize=9,
+            color="#4B5563",
+        )
+        save_figure(fig, output_dir / f"benchmark_class_{metric}")
+
+    (output_dir / "benchmark_class_precision_recall.png").unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -249,7 +274,7 @@ def main() -> None:
 
     plot_overall(rows, output_dir)
     plot_class_iou(rows, output_dir)
-    plot_class_precision_recall(rows, output_dir)
+    plot_class_precision_and_recall(rows, output_dir)
 
     print(f"Loaded {len(rows)} models from {summary_path}")
     print("Ranked by test mIoU:")

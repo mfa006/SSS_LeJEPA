@@ -6,6 +6,7 @@ Extracts frozen spatial feature maps [B, D, H_g, W_g] and pooled representations
 import os
 import sys
 import math
+from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
@@ -57,6 +58,7 @@ class BackboneExtractor(nn.Module):
       - 'resnet34': Standard LeJEPA paper ConvNet baseline (D=512, 7x7 grid, 21.3M params)
       - 'convnext_tiny': Modern ConvNet baseline (D=768, 7x7 grid, 27.8M params)
       - 'lejepa_vitb16': LeJEPA ViT-B/16 (D=768, 14x14 grid, 86.6M params)
+      - 'benthic_dino': BenthicDINO ConvNeXt-V2 Tiny (D=768, 56x56 fused grid)
     """
     def __init__(
         self,
@@ -81,6 +83,29 @@ class BackboneExtractor(nn.Module):
         elif self.family in ["resnet", "convnext"]:
             import timm
             self.model = timm.create_model(self.spec.model_id, pretrained=pretrained, num_classes=0)
+        elif self.family == "benthic_dino":
+            benthic_root = "/home/rahul/BenthicDINO"
+            if benthic_root not in sys.path:
+                sys.path.insert(0, benthic_root)
+
+            try:
+                import cumm.common as cumm_common
+                bendino_root = "/home/rahul/miniconda3/envs/bendino"
+                cumm_common._CACHED_CUDA_INCLUDE_LIB = (
+                    Path(bendino_root + "/include"),
+                    Path(bendino_root + "/lib"),
+                )
+            except ImportError:
+                pass
+            try:
+                import importlib
+                benthic_utils = importlib.import_module("src.utils")
+                load_backbone = benthic_utils.load_backbone
+            except (ImportError, AttributeError) as exc:
+                raise RuntimeError(
+                    "BenthicDINO dependencies are unavailable. Use the bendino Conda environment."
+                ) from exc
+            self.model = load_backbone(self.spec.model_id, device=torch.device(self.device))
         else:
             raise ValueError(f"Unknown family {self.family}")
 
@@ -124,6 +149,21 @@ class BackboneExtractor(nn.Module):
             # Reshape [B, N, D] -> [B, D, H_g, W_g]
             spatial_feats = patch_tokens.permute(0, 2, 1).reshape(B, self.feature_dim, grid_side, grid_side)
             grid_size = (grid_side, grid_side)
+
+        elif self.family == "benthic_dino":
+            if x.shape[1] != 1:
+                raise ValueError(
+                    f"BenthicDINO requires 1-channel input, received shape {tuple(x.shape)}"
+                )
+            stages = self.model._inference(x)
+            spatial_feats = self.model.fusion(stages)
+            if spatial_feats.shape[1] != self.feature_dim:
+                raise RuntimeError(
+                    f"BenthicDINO fused features have {spatial_feats.shape[1]} channels; "
+                    f"expected {self.feature_dim}"
+                )
+            global_feat = F.adaptive_avg_pool2d(spatial_feats, (1, 1)).flatten(1)
+            grid_size = (spatial_feats.shape[2], spatial_feats.shape[3])
 
         elif self.family in ["resnet", "convnext"]:
             # timm forward_features returns [B, D, H_g, W_g]

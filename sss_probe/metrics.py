@@ -179,9 +179,11 @@ def compute_segmentation_metrics_from_confusion(
 
     mean_valid = lambda values: float(np.nanmean(values)) if np.any(~np.isnan(values)) else 0.0
     total = int(confusion.sum())
+    mean_dice = mean_valid(dices)
     results = {
         "mIoU": mean_valid(ious),
-        "mDice": mean_valid(dices),
+        "mDice": mean_dice,
+        "macro_f1": mean_dice,
         "macro_precision": mean_valid(precisions),
         "macro_recall": mean_valid(recalls),
         "pixel_accuracy": float(true_positive.sum() / total) if total else 0.0,

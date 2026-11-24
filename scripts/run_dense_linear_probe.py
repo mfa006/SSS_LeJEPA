@@ -47,15 +47,47 @@ def load_yaml(path: str) -> dict:
 
 def build_data_config(cfg: dict) -> SSSDataConfig:
     d = cfg["data"]
+    model_name = cfg.get("model", {}).get("name", "")
+    is_benthic = model_name == "benthic_dino"
+    benthic_cfg = cfg.get("benthic_dino", {})
     return SSSDataConfig(
         images_subdir           = d.get("images_subdir",      "images"),
         masks_subdir            = d.get("masks_subdir",        "masks"),
         labels_subdir           = d.get("labels_subdir",       "class_labels"),
         image_extension         = d.get("image_extension",     ".tiff"),
         target_size             = tuple(d.get("target_size",   [224, 224])),
-        enable_contrast_stretch = d.get("enable_contrast_stretch", True),
+        enable_contrast_stretch = (
+            benthic_cfg.get(
+                "enable_contrast_stretch",
+                d.get("enable_contrast_stretch", False),
+            )
+            if is_benthic
+            else d.get("enable_contrast_stretch", True)
+        ),
         p_low                   = d.get("p_low",  0.01),
         p_high                  = d.get("p_high", 0.99),
+        input_channels          = (
+            benthic_cfg.get("input_channels", d.get("input_channels", 1))
+            if is_benthic
+            else d.get("input_channels", 3)
+        ),
+        preprocessing           = (
+            benthic_cfg.get("preprocessing", d.get("preprocessing", "benthic"))
+            if is_benthic
+            else d.get("preprocessing", "imagenet")
+        ),
+        benthic_mean            = benthic_cfg.get(
+            "mean", d.get("benthic_mean", 0.7706402539115733)
+        ),
+        benthic_std             = benthic_cfg.get(
+            "std", d.get("benthic_std", 0.15731125981879593)
+        ),
+        benthic_feature_variant = benthic_cfg.get(
+            "feature_variant", d.get("benthic_feature_variant", "fused")
+        ),
+        load_tile_labels        = benthic_cfg.get(
+            "load_tile_labels", d.get("load_tile_labels", not is_benthic)
+        ),
     )
 
 
@@ -114,11 +146,27 @@ def get_or_extract_features(
     otherwise extracts from the frozen backbone and saves to cache.
     """
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"{model_name}_{split_name}_feats.pt")
+    if model_name == "benthic_dino":
+        variant = getattr(dataset.config, "benthic_feature_variant", "fused")
+        cache_file = os.path.join(
+            cache_dir, f"benthic_dino_{variant}_{split_name}_feats.pt"
+        )
+    else:
+        cache_file = os.path.join(cache_dir, f"{model_name}_{split_name}_feats.pt")
 
     if os.path.exists(cache_file):
         print(f"Loading cached {split_name} features from: {cache_file}")
         cached = torch.load(cache_file, map_location="cpu")
+        metadata = cached.get("metadata", {})
+        if model_name == "benthic_dino":
+            expected_grid = (56, 56)
+            if tuple(cached["features"].shape[-2:]) != expected_grid:
+                raise RuntimeError(
+                    f"BenthicDINO cache grid mismatch: expected {expected_grid}, "
+                    f"got {tuple(cached['features'].shape[-2:])}"
+                )
+            if metadata.get("model_name") not in (None, "benthic_dino"):
+                raise RuntimeError(f"Incompatible BenthicDINO cache metadata: {metadata}")
         return cached["features"].float(), cached["masks"].long()
 
     print(f"Extracting and caching {split_name} features ({len(dataset)} tiles)...")
@@ -138,7 +186,15 @@ def get_or_extract_features(
     cached_feats = torch.cat(all_feats, dim=0)   # [N, D, H_g, W_g]
     cached_masks = torch.stack(all_masks, dim=0)  # [N, 224, 224]
 
-    torch.save({"features": cached_feats, "masks": cached_masks}, cache_file)
+    torch.save({
+        "features": cached_feats,
+        "masks": cached_masks,
+        "metadata": {
+            "model_name": model_name,
+            "feature_dim": extractor.feature_dim,
+            "grid_size": tuple(cached_feats.shape[-2:]),
+        },
+    }, cache_file)
     print(f"Saved {split_name} cache to: {cache_file}")
     return cached_feats.float(), cached_masks.long()
 
@@ -160,12 +216,15 @@ def update_benchmark_summary(
     record: Dict[str, Any] = {
         "model":                model_name,
         "feature_dim":          in_channels,
+        "param_count_m":        SUPPORTED_BACKBONES[model_name].param_count_m,
         "best_epoch":           best_epoch,
         "test_mIoU_pct":        round(test_metrics["mIoU"] * 100, 2),
         "test_mDice_pct":       round(test_metrics["mDice"] * 100, 2),
+        "test_macro_f1_pct":    round(test_metrics["macro_f1"] * 100, 2),
         "test_pixel_acc_pct":   round(test_metrics["pixel_accuracy"] * 100, 2),
         "test_macro_precision_pct": round(test_metrics["macro_precision"] * 100, 2),
         "test_macro_recall_pct":    round(test_metrics["macro_recall"] * 100, 2),
+        "val_macro_f1_pct":     round(val_metrics["macro_f1"] * 100, 2),
         "val_macro_precision_pct":  round(val_metrics["macro_precision"] * 100, 2),
         "val_macro_recall_pct":     round(val_metrics["macro_recall"] * 100, 2),
         "val_mIoU_pct":         round(val_metrics["mIoU"] * 100, 2),
@@ -202,10 +261,10 @@ def update_benchmark_summary(
     print(f"Updated benchmark JSON summary: {summary_json}")
 
     fieldnames = [
-        "model", "feature_dim", "best_epoch",
-        "test_mIoU_pct", "test_mDice_pct", "test_pixel_acc_pct",
+        "model", "feature_dim", "param_count_m", "best_epoch",
+        "test_mIoU_pct", "test_mDice_pct", "test_macro_f1_pct", "test_pixel_acc_pct",
         "test_macro_precision_pct", "test_macro_recall_pct",
-        "val_macro_precision_pct", "val_macro_recall_pct",
+        "val_macro_f1_pct", "val_macro_precision_pct", "val_macro_recall_pct",
         *[f"test_iou_{slug}_pct" for slug in class_slugs.values()],
         *[f"test_precision_{slug}_pct" for slug in class_slugs.values()],
         *[f"test_recall_{slug}_pct" for slug in class_slugs.values()],
@@ -283,7 +342,12 @@ def run_dense_probe_experiment(yaml_path: str) -> Dict[str, Any]:
     cache_dir      = cfg["output"].get("cache_dir",      "eval/cache")
 
     print("=" * 70)
-    print(" SSS DENSE LINEAR PROBE  —  YAML-driven")
+    experiment_name = (
+        "BENTHICDINO FUSED LINEAR PROBE"
+        if model_name == "benthic_dino"
+        else "SSS DENSE LINEAR PROBE"
+    )
+    print(f" {experiment_name}  —  YAML-driven")
     print("=" * 70)
     print(f"Config file:       {yaml_path}")
     print(f"Model Backbone:    {model_name}")
@@ -303,6 +367,53 @@ def run_dense_probe_experiment(yaml_path: str) -> Dict[str, Any]:
     # ── 3. Frozen backbone extractor ──────────────────────────────────────────
     extractor = BackboneExtractor(model_name, device=device)
     spec      = SUPPORTED_BACKBONES[model_name]
+
+    if model_name == "benthic_dino":
+        from sss_probe.benthic_s3seg import run_benthic_s3seg_benchmark
+
+        benthic_cfg = cfg.get("benthic_dino", {})
+        training_cfg = cfg.get("training", {})
+        result = run_benthic_s3seg_benchmark(
+            model=extractor.model,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            test_dataset=test_ds,
+            device=device,
+            results_dir=output_dir,
+            checkpoint_dir=checkpoint_dir,
+            config_file=yaml_path,
+            batch_size=benthic_cfg.get(
+                "feature_batch_size", training_cfg.get("feature_batch_size", 8)
+            ),
+            pixels_per_tile=benthic_cfg.get(
+                "pixels_per_tile", training_cfg.get("pixels_per_tile", 256)
+            ),
+            few_shot=benthic_cfg.get(
+                "few_shot",
+                training_cfg.get("few_shot", [1.00]),
+            ),
+            feature_variant=benthic_cfg.get("feature_variant", "fused"),
+            epochs=training_cfg.get("epochs", 30),
+            classifier_batch_size=benthic_cfg.get(
+                "classifier_batch_size", 8192
+            ),
+            learning_rate=training_cfg.get("learning_rate", 1e-3),
+            weight_decay=training_cfg.get("weight_decay", 1e-4),
+            lr_scheduler=training_cfg.get("lr_scheduler", "cosine"),
+            early_stopping_patience=training_cfg.get(
+                "early_stopping_patience", 10
+            ),
+            num_workers=benthic_cfg.get("num_workers", 0),
+        )
+        update_benchmark_summary(
+            results_dir=output_dir,
+            model_name=model_name,
+            test_metrics=result["test_metrics"],
+            val_metrics=result["val_metrics"],
+            best_epoch=result["history"]["best_epoch"],
+            in_channels=spec.feature_dim,
+        )
+        return result
 
     # ── 4. Extract or load cached features ───────────────────────────────────
     train_feats, train_masks = get_or_extract_features(
@@ -335,6 +446,9 @@ def run_dense_probe_experiment(yaml_path: str) -> Dict[str, Any]:
         extra_info={
             "model_name":    model_name,
             "feature_dim":   spec.feature_dim,
+            "preprocessing": data_cfg.preprocessing,
+            "input_channels": data_cfg.input_channels,
+            "feature_variant": getattr(data_cfg, "benthic_feature_variant", None),
             "train_samples": len(train_ds),
             "val_samples":   len(val_ds),
             "test_samples":  len(test_ds),

@@ -30,7 +30,12 @@ class SSSDataConfig:
     labels_subdir: str = "class_labels"
     image_extension: str = ".tiff"
     target_size: Tuple[int, int] = (224, 224)
-    
+    input_channels: int = 3
+    preprocessing: str = "imagenet"
+    benthic_mean: float = 0.7706402539115733
+    benthic_std: float = 0.15731125981879593
+    benthic_feature_variant: str = "fused"
+
     # Radiometric contrast calibration (deterministic, zero artificial augmentation)
     enable_contrast_stretch: bool = True
     p_low: float = 0.01    # 1st percentile (clips dark-floor outliers)
@@ -41,6 +46,7 @@ class SSSDataConfig:
     val_ratio: float = 0.05     # 5% for probe validation & early stopping (~90 tiles)
     test_ratio: float = 0.85    # 85% held-out test evaluation (~1,530 tiles)
     seed: int = 42
+    load_tile_labels: bool = True
 
 
 @dataclass
@@ -86,6 +92,14 @@ SUPPORTED_BACKBONES: Dict[str, ModelSpec] = {
         feature_dim=768,
         spatial_downsample=16,
         param_count_m=86.57,
+    ),
+    "benthic_dino": ModelSpec(
+        name="benthic_dino",
+        family="benthic_dino",
+        model_id="/home/rahul/BenthicDINO/weights/checkpoint_latest.pth",
+        feature_dim=768,
+        spatial_downsample=4,
+        param_count_m=27.82,
     ),
 }
 

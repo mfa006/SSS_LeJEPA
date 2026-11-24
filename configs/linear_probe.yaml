@@ -2,10 +2,10 @@
 # SSS Dense Linear Probe — Configuration
 # ============================================================
 # Data directories must already be split into train / val / test.
-# Each split directory must contain the same three sub-folders:
+# Each split directory must contain the image and mask sub-folders:
 #   images/        ← sonar waterfall tiles  (.tiff)
 #   masks/         ← semantic masks         (.tiff)
-#   class_labels/  ← per-tile label CSVs    (.csv)
+#   class_labels/  ← optional per-tile CSVs; not read by BenthicDINO S3Seg
 
 data:
   train_dir: /media/rahul/Apacer_1TB/data/FromHayat/2ndRound/SSS/s3seg4_256_unique/data/liear_prob/
@@ -18,14 +18,13 @@ data:
   image_extension: .tiff
 
   target_size: [224, 224]        # resize all tiles to this (W, H)
-  enable_contrast_stretch: true  # 1st–99th percentile radiometric calibration
   p_low:  0.01
   p_high: 0.99
 
 # ── Backbone ─────────────────────────────────────────────────
 model:
   # Supported: lejepa_vits16 | lejepa_vitb16 | resnet34 | convnext_tiny
-  name: lejepa_vits16 #convnext_tiny #resnet34
+  name: benthic_dino
   device: cuda              # cuda | cpu
 
 # ── Linear Probe Architecture ────────────────────────────────
@@ -46,8 +45,23 @@ training:
   lr_scheduler:             cosine   # cosine | step | none
   early_stopping_patience:  10
 
+# ── BenthicDINO-only preprocessing and S3Seg settings ─────────
+benthic_dino:
+  input_channels:           1
+  preprocessing:            benthic
+  enable_contrast_stretch:  false # Use pretrained normalization without percentile stretching
+  load_tile_labels:         false # S3Seg uses pixel masks; per-tile CSVs are not needed
+  mean:                     0.7706402539115733
+  std:                      0.15731125981879593
+  feature_variant:          fused
+  feature_batch_size:       16     # Increase if GPU memory permits
+  classifier_batch_size:    32768  # Larger VRAM batches reduce CPU/GPU transfer overhead
+  num_workers:              2     # CPU image/mask loading workers
+  pixels_per_tile:          256   # Reproducible train pixels sampled per tile
+  few_shot:                 [1.00] # Use the entire pre-split 10% train_dir for parity with other backbones
+
 # ── Output Paths ─────────────────────────────────────────────
 output:
-  cache_dir:       /home/rahul/SSS_LeJEPA/eval/cache         # pre-extracted feature tensors
+  cache_dir:       /media/rahul/Apacer_1TB/data/FromHayat/2ndRound/SSS/s3seg4_256_unique/feature_cache # Used by non-Benthic backbones
   checkpoint_dir:  /home/rahul/SSS_LeJEPA/eval/checkpoints   # trained probe weights (.pt)
   results_dir:     /home/rahul/SSS_LeJEPA/eval/results       # metrics JSON/CSV + plots

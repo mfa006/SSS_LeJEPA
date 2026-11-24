@@ -6,6 +6,7 @@ import os
 import pytest
 import torch
 import numpy as np
+from torch.utils.data import TensorDataset
 
 import sss_probe
 from sss_probe.config import SSSDataConfig, LinearProbeConfig
@@ -34,6 +35,28 @@ def test_config_initialization():
     assert "resnet34" in sss_probe.SUPPORTED_BACKBONES
     assert "convnext_tiny" in sss_probe.SUPPORTED_BACKBONES
     assert "lejepa_vits16" in sss_probe.SUPPORTED_BACKBONES
+    assert "benthic_dino" in sss_probe.SUPPORTED_BACKBONES
+    benthic = sss_probe.SUPPORTED_BACKBONES["benthic_dino"]
+    assert benthic.family == "benthic_dino"
+    assert benthic.feature_dim == 768
+
+
+def test_benthic_preprocessing_shape(tmp_path):
+    from sss_probe.dataset import preprocess_sonar_image
+    from PIL import Image
+
+    source = tmp_path / "sonar.tiff"
+    Image.fromarray(np.full((256, 256), 127, dtype=np.uint8), mode="L").save(source)
+
+    _, imagenet_tensor = preprocess_sonar_image(
+        str(source), input_channels=3, preprocessing="imagenet", enable_contrast_stretch=False
+    )
+    _, benthic_tensor = preprocess_sonar_image(
+        str(source), input_channels=1, preprocessing="benthic", enable_contrast_stretch=False
+    )
+
+    assert imagenet_tensor.shape == (3, 224, 224)
+    assert benthic_tensor.shape == (1, 224, 224)
 
 
 def test_dense_linear_probe_forward():
@@ -77,6 +100,7 @@ def test_segmentation_metrics():
     assert metrics["recall_class_1"] == 1.0
     assert metrics["support_class_2"] == 1
     assert metrics["predicted_support_class_2"] == 2
+    assert metrics["macro_f1"] == metrics["mDice"]
     assert metrics["macro_precision"] == pytest.approx((1 + 2 / 3 + 1 / 2 + 1) / 4)
     assert metrics["macro_recall"] == pytest.approx((2 / 3 + 1 + 1 + 1 / 2) / 4)
 
@@ -115,3 +139,29 @@ def test_dense_probe_trainer_fit_and_checkpoint(tmp_path):
     # Prediction test
     pred = trainer.predict_mask(train_feats[0], out_size=(224, 224))
     assert pred.shape == (224, 224)
+
+
+def test_dense_probe_trainer_accepts_feature_datasets():
+    probe = DenseLinearProbe(in_channels=8, num_classes=4, norm_type="none")
+    cfg = LinearProbeConfig(
+        epochs=1,
+        batch_size=2,
+        device="cpu",
+        use_class_weights=False,
+        lr_scheduler="none",
+    )
+    trainer = DenseProbeTrainer(probe, config=cfg)
+    train_dataset = TensorDataset(
+        torch.randn(4, 8, 2, 2),
+        torch.randint(0, 4, (4, 8, 8), dtype=torch.long),
+    )
+    val_dataset = TensorDataset(
+        torch.randn(2, 8, 2, 2),
+        torch.randint(0, 4, (2, 8, 8), dtype=torch.long),
+    )
+
+    history = trainer.fit(train_dataset, val_features=val_dataset)
+    metrics = trainer.evaluate(val_dataset)
+
+    assert len(history["train_loss"]) == 1
+    assert 0.0 <= metrics["mIoU"] <= 1.0

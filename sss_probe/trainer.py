@@ -6,12 +6,12 @@ and test set evaluation.
 
 import os
 import copy
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader, Dataset
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -61,11 +61,24 @@ class DenseProbeTrainer:
         else:
             self.scheduler = None
 
+    def _make_dataset(
+        self,
+        features: Union[torch.Tensor, Dataset],
+        masks: Optional[torch.Tensor],
+    ) -> Dataset:
+        if isinstance(features, Dataset):
+            if masks is not None:
+                raise ValueError("Masks must be part of the feature dataset when using a Dataset.")
+            return features
+        if masks is None:
+            raise ValueError("Masks are required when features are provided as a tensor.")
+        return TensorDataset(features, masks)
+
     def fit(
         self,
-        train_features: torch.Tensor,
-        train_masks: torch.Tensor,
-        val_features: Optional[torch.Tensor] = None,
+        train_features: Union[torch.Tensor, Dataset],
+        train_masks: Optional[torch.Tensor] = None,
+        val_features: Optional[Union[torch.Tensor, Dataset]] = None,
         val_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """
@@ -73,13 +86,19 @@ class DenseProbeTrainer:
         Automatically saves and restores the weights that achieved the highest validation mIoU.
 
         Args:
-            train_features: [N_train, D, H_g, W_g] cached spatial features
-            train_masks:    [N_train, H, W] ground truth masks
-            val_features:   [N_val, D, H_g, W_g] validation features
-            val_masks:      [N_val, H, W] validation masks
+            train_features: tensor or dataset yielding cached spatial features and masks
+            train_masks:    [N_train, H, W] ground truth masks for tensor features
+            val_features:   tensor or dataset yielding validation features and masks
+            val_masks:      [N_val, H, W] masks for tensor validation features
         """
-        train_ds = TensorDataset(train_features, train_masks)
+        train_ds = self._make_dataset(train_features, train_masks)
         train_loader = DataLoader(train_ds, batch_size=self.config.batch_size, shuffle=True)
+        if val_features is None:
+            if val_masks is not None:
+                raise ValueError("Validation features and masks must be supplied together.")
+            val_ds = None
+        else:
+            val_ds = self._make_dataset(val_features, val_masks)
 
         history: Dict[str, Any] = {
             "train_loss": [],
@@ -127,8 +146,8 @@ class DenseProbeTrainer:
                 self.scheduler.step()
 
             # Validation evaluation
-            if val_features is not None and val_masks is not None:
-                val_metrics = self.evaluate(val_features, val_masks)
+            if val_ds is not None:
+                val_metrics = self.evaluate(val_ds)
                 val_loss = val_metrics.get("val_loss", 0.0)
                 val_miou = val_metrics.get("mIoU", 0.0)
 
@@ -164,14 +183,14 @@ class DenseProbeTrainer:
     @torch.no_grad()
     def evaluate(
         self,
-        features: torch.Tensor,
-        masks: torch.Tensor,
+        features: Union[torch.Tensor, Dataset],
+        masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, float]:
         """
         Evaluates dense segmentation accuracy, mIoU, and per-class IoU.
         """
         self.probe.eval()
-        ds = TensorDataset(features, masks)
+        ds = self._make_dataset(features, masks)
         loader = DataLoader(ds, batch_size=self.config.batch_size, shuffle=False)
 
         total_loss = 0.0
